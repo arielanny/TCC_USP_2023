@@ -4,6 +4,8 @@
 
 using JuMP, MathOptInterface, HiGHS, DataFrames, Cbc, Gurobi
 
+include("L3N2.jl")
+
 include("L10N20.jl")
 include("L10N30.jl")
 include("L10N50.jl")
@@ -11,26 +13,28 @@ include("L10N50.jl")
 include("L20N20.jl")
 include("L20N30.jl")
 include("L20N50.jl")
+include("L20N100.jl")
+include("L20N200.jl")
 
 include("L30N20.jl")
 include("L30N30.jl")
 include("L30N50.jl")
+include("L30N200.jl")
 
 # ********** INICIALIZAÇÃO DO OBJETO MODELO **********
-model = Model(Gurobi.Optimizer)
-set_time_limit_sec(model,100) # seta o tempo em segundos
+model = Model(Cbc.Optimizer)
+set_time_limit_sec(model,1800) # seta o tempo em segundos
+#set_optimizer_attribute(model, "OutputFlag", 0)
 
 # **********  DEFINIÇÃO DE PARÂMETROS **********
 # matriz a_li binária, elemento = 1 -> existe pedido da loja l para o logradouro i, 0 c.c.
 
-a = al10n20
+a = al30n50
 
 L,N = size(a)# numero de lojas e numero de destinos
-TT = 10 # tempo (min) de troca de veiculos
 TP = zeros(1,L) # tempo de processamento (descarregamento e separação) das cargas de entrada
 TC = zeros(1,N) # tempo de processamento das cargas de entrada
-t_manuseio = 2 # minutos em média para manusear um pacote, consideramos que as cargas são pequenas
-t_separacao = 2  # minutos para separar um pacte de acordo com uma região
+t_manuseio = 1 # minutos em média para manusear um pacote, consideramos que as cargas são pequenas
 
 # calculando tempo de processamento das cargas de entrada
     # baseado na quantidade de cargas que vêm de uma única loja
@@ -40,7 +44,7 @@ for l in 1:L
     for i in 1:N
         aux = aux + a[l,i]
     end
-    tempo = (t_manuseio  * aux) + (t_separacao * aux) # contando tempo de descarregar a carga e de seperar ela
+    tempo = (t_manuseio  * aux) # contando tempo de descarregar a carga e de seperar ela
     TP[l] = tempo
 end
 
@@ -72,7 +76,11 @@ for l in 1:L+2
 end
 
 for m in 1:L+2
-    @constraint(model, w[L+2,m] == 0) # ninguém pode vir antes da carga fantasma do final
+    @constraint(model, w[L+2,m] == 0) # ninguém pode vir depois da carga fantasma do final
+end
+
+for m in 1:L+2
+    @constraint(model, w[m,m] == 0) # a carga não pode estar antes ou depois dela mesma
 end
 
 for m in 2:L+2
@@ -86,7 +94,7 @@ end
 for l in 1:L
     for m in 1:L
         if l !=m
-            @constraint(model, tp[m] >= tp[l] + TT + TP[m] - M*(1 - w[l+1,m+1]))
+            @constraint(model, tp[m] >= tp[l] + TP[m] - M*(1 - w[l+1,m+1]))
         end
     end
 end
@@ -113,10 +121,14 @@ for i in 1:N+1
     @constraint(model, sum(z[i,:]) - z[i,i] == 1)
 end
 
+for j in 1:N+2
+    @constraint(model, z[j,j] == 0) # a carga não pode estar antes ou depois dela mesma
+end
+
 for i in 1:N
     for j in 1:N
         if i != j
-            @constraint(model, tc[i] >= tc[j] + TT + TC[j] - M*(1 - z[i+1,j+1]))
+            @constraint(model, tc[i] >= tc[j] + TC[j] - M*(1 - z[i+1,j+1]))
         end
     end
 end
@@ -132,7 +144,7 @@ end
 # ********** RESTRIÇÕES DE CONEXÃO AS CARGAS **********
 for i in 1:N
     for l in 1:L
-        @constraint(model, tc[i] >= a[l,i] * tp[l] + TT + TC[i])
+        @constraint(model, tc[i] >= a[l,i] * tp[l] + TC[i])
     end
 end
 
@@ -182,7 +194,7 @@ df_resultados = DataFrame(mtx_resultados, ["var_name","var_value"])
 df_resultados.var_name = string.(collect(df_resultados[!,:var_name]))
 
 # ********** SALVANDO RESULTADOS EM UM .TXT **********
-nome_arquivo = string("/Users/ariel/Documents/USP/TCC/","Gurobi - resultados L",string(L)," N", string(N))
+nome_arquivo = string("Cbc - resultados L",string(L)," N", string(N))
 
 open(nome_arquivo,"a") do io
 
@@ -210,7 +222,7 @@ open(nome_arquivo,"a") do io
             end
         end
     end
-    
+
     println(io,"---------------------------------------")
     println(io,"\n\n")
     println(io, df_resultados)
